@@ -1,0 +1,130 @@
+//! Auto-sell stream example.
+//!
+//! This program connects to the LaserSell stream, listens for
+//! `ExitSignalWithTx` events, signs each unsigned transaction with a local
+//! keypair, and submits it through Helius Sender.
+//!
+//! Before running:
+//! - Replace the API key and wallet placeholders below.
+//! - Point `keypair_path` to a local Solana keypair file.
+//!
+//! Behavior notes:
+//! - Transaction submission failures are logged and the stream keeps running.
+//! - If the stream disconnects, the example returns an error.
+
+use std::error::Error;
+
+use lasersell_sdk::stream::client::{strategy_config_from_optional, StreamClient, StreamConfigure};
+use lasersell_sdk::stream::proto::ServerMessage;
+use lasersell_sdk::stream::session::{StreamEvent, StreamSession};
+use lasersell_sdk::tx::{send_transaction, sign_unsigned_tx, SendTarget};
+use secrecy::SecretString;
+use solana_sdk::signature::read_keypair_file;
+use tokio::task::JoinSet;
+
+struct SubmittedExit {
+    wallet_pubkey: String,
+    mint: String,
+    signature: String,
+}
+
+fn handle_submission_result(result: Result<Result<SubmittedExit, String>, tokio::task::JoinError>) {
+    match result {
+        Ok(Ok(submission)) => {
+            println!(
+                "submitted exit tx signature={} wallet={} mint={}",
+                submission.signature, submission.wallet_pubkey, submission.mint
+            );
+        }
+        Ok(Err(message)) => {
+            eprintln!("submission error: {message}");
+        }
+        Err(error) => {
+            eprintln!("submission task failed: {error}");
+        }
+    }
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn Error>> {
+    let api_key = "REPLACE_WITH_API_KEY".to_string();
+    let wallet_pubkeys = vec![
+        "REPLACE_WITH_WALLET_PUBKEY_1".to_string(),
+        "REPLACE_WITH_WALLET_PUBKEY_2".to_string(),
+    ];
+    let keypair_path = "REPLACE_WITH_KEYPAIR_PATH".to_string();
+    let close_after_submit = false;
+
+    let client = StreamClient::new(SecretString::new(api_key));
+    let configure = StreamConfigure {
+        wallet_pubkeys,
+        strategy: strategy_config_from_optional(None, None, None, None),
+        deadline_timeout_sec: 45,
+    };
+
+    let keypair = read_keypair_file(keypair_path)?;
+    let http = reqwest::Client::builder().build()?;
+    let mut session = StreamSession::connect(&client, configure).await?;
+    let mut submissions = JoinSet::new();
+
+    while let Some(event) = session.recv().await {
+        match event {
+            StreamEvent::PositionOpened { handle, .. } => {
+                println!(
+                    "tracked position wallet={} mint={} token_account={}",
+                    handle.wallet_pubkey, handle.mint, handle.token_account
+                );
+            }
+            StreamEvent::ExitSignalWithTx {
+                handle: _,
+                message:
+                    ServerMessage::ExitSignalWithTx {
+                        position_id,
+                        wallet_pubkey,
+                        mint,
+                        unsigned_tx_b64,
+                        ..
+                    },
+            } => {
+                let signed_tx = sign_unsigned_tx(&unsigned_tx_b64, &keypair)?;
+                let http = http.clone();
+                let sender = session.sender();
+                submissions.spawn(async move {
+                    let signature = send_transaction(&http, &SendTarget::HeliusSender, &signed_tx).await.map_err(
+                        |error| {
+                            format!(
+                                "send failed position_id={position_id} wallet={wallet_pubkey} mint={mint}: {error}"
+                            )
+                        },
+                    )?;
+
+                    if close_after_submit {
+                        sender.close_by_id(position_id).map_err(|error| {
+                            format!("close failed position_id={position_id}: {error}")
+                        })?;
+                    }
+
+                    Ok::<SubmittedExit, String>(SubmittedExit {
+                        wallet_pubkey,
+                        mint,
+                        signature,
+                    })
+                });
+            }
+            StreamEvent::Message(ServerMessage::Error { code, message }) => {
+                eprintln!("stream error code={code} message={message}");
+            }
+            _ => {}
+        }
+
+        while let Some(result) = submissions.try_join_next() {
+            handle_submission_result(result);
+        }
+    }
+
+    while let Some(result) = submissions.join_next().await {
+        handle_submission_result(result);
+    }
+
+    Err("stream ended unexpectedly".into())
+}
