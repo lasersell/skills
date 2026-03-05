@@ -62,6 +62,8 @@
 | `wallet_pubkeys` | `string[]` | Yes | Wallet public keys to monitor |
 | `strategy` | `StrategyConfigMsg` | Yes | Exit strategy configuration |
 | `deadline_timeout_sec` | `u64` | No | Seconds before forced exit. `0` = disabled |
+| `send_mode` | `"rpc"` \| `"helius_sender"` \| `"astralane"` | No | Transaction submission mode. Default: `"rpc"` |
+| `tip_lamports` | `u64` | No | Priority fee tip in lamports. Default: 1000 (0.001 SOL) |
 
 ### StrategyConfigMsg
 

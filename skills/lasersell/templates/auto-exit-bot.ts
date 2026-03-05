@@ -47,6 +47,8 @@ async function main(): Promise<void> {
     wallet_pubkeys: [walletPubkey],
     strategy: STRATEGY,
     deadline_timeout_sec: DEADLINE_TIMEOUT_SEC,
+    send_mode: "helius_sender",
+    tip_lamports: 1000,
   });
   console.log("Stream connected.");
 

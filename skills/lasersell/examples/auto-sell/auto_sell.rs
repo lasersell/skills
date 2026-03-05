@@ -60,6 +60,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
         wallet_pubkeys,
         strategy: strategy_config_from_optional(None, None, None, None),
         deadline_timeout_sec: 45,
+        send_mode: Some("helius_sender".to_string()),
+        tip_lamports: Some(1000),
     };
 
     let keypair = read_keypair_file(keypair_path)?;
