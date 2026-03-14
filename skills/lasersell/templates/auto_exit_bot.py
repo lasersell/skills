@@ -22,8 +22,8 @@ from pathlib import Path
 
 from solders.keypair import Keypair
 
-from lasersell_sdk.exit_api import BuildBuyTxRequest, ExitApiClient
-from lasersell_sdk.stream.client import StreamClient, StreamConfigure
+from lasersell_sdk.exit_api import BuildBuyTxRequest, ExitApiClient, prove_ownership
+from lasersell_sdk.stream.client import StreamClient, StreamConfigure, StrategyConfigBuilder
 from lasersell_sdk.stream.session import StreamSession
 from lasersell_sdk.tx import SendTargetHeliusSender, send_transaction, sign_unsigned_tx
 
@@ -31,11 +31,14 @@ from lasersell_sdk.tx import SendTargetHeliusSender, send_transaction, sign_unsi
 API_KEY = os.environ["LASERSELL_API_KEY"]
 KEYPAIR_PATH = os.environ.get("KEYPAIR_PATH", "keypair.json")
 
-STRATEGY = {
-    "target_profit_pct": 50,
-    "stop_loss_pct": 10,
-    "trailing_stop_pct": 5,
-}
+STRATEGY = (
+    StrategyConfigBuilder()
+    .target_profit_pct(50)
+    .stop_loss_pct(10)
+    .trailing_stop_pct(5)
+    .liquidity_guard(True)
+    .build()
+)
 DEADLINE_TIMEOUT_SEC = 0  # 0 = disabled
 BUY_SLIPPAGE_BPS = 2_000  # 20%
 
@@ -45,22 +48,24 @@ async def main() -> None:
     wallet_pubkey = str(keypair.pubkey())
 
     print(f"Wallet: {wallet_pubkey}")
-    print(f"Strategy: TP={STRATEGY['target_profit_pct']}% SL={STRATEGY['stop_loss_pct']}% TS={STRATEGY['trailing_stop_pct']}%")
+    print(f"Strategy: {STRATEGY}")
 
-    # 1. Connect stream FIRST
-    session = await StreamSession.connect(
-        StreamClient(API_KEY),
-        StreamConfigure(
-            wallet_pubkeys=[wallet_pubkey],
-            strategy=STRATEGY,
-            deadline_timeout_sec=DEADLINE_TIMEOUT_SEC,
-            send_mode="helius_sender",
-            tip_lamports=1000,
-        ),
+    # 1. Prove wallet ownership (local Ed25519 signature, no network call)
+    proof = prove_ownership(keypair)
+
+    # 2. Register wallet (required before stream connection)
+    exit_client = ExitApiClient.with_api_key(API_KEY)
+    await exit_client.register_wallet(proof)
+
+    # 3. Connect stream with registered wallet
+    session = await StreamClient(API_KEY).connect_with_wallets(
+        [proof],
+        STRATEGY,
+        deadline_timeout_sec=DEADLINE_TIMEOUT_SEC,
     )
     print("Stream connected.")
 
-    # 2. Optional: buy a token
+    # 4. Optional: buy a token
     mint_to_buy = sys.argv[1] if len(sys.argv) > 1 else None
     amount_sol = float(sys.argv[2]) if len(sys.argv) > 2 else 0
     if mint_to_buy and amount_sol > 0:
@@ -76,7 +81,7 @@ async def main() -> None:
         buy_sig = await send_transaction(SendTargetHeliusSender(), signed_buy)
         print(f"Buy submitted: {buy_sig}")
 
-    # 3. Event loop
+    # 5. Event loop
     print("Monitoring positions...")
     while True:
         event = await session.recv()

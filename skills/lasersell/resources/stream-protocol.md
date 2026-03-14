@@ -26,9 +26,14 @@ Sent once after connection. Sets up wallets and strategy.
   },
   "deadline_timeout_sec": 120,
   "send_mode": "helius_sender",
-  "tip_lamports": 1000
+  "tip_lamports": 1000,
+  "watch_wallets": [
+    { "pubkey": "WATCH_WALLET_PUBKEY_1" }
+  ]
 }
 ```
+
+All wallets in `wallet_pubkeys` must be registered via `POST /v1/wallets/register` before connecting. Unregistered wallets are rejected with error code `wallet_not_registered`.
 
 ### update_strategy
 
@@ -75,6 +80,36 @@ Manually request an exit signal with transaction for a position.
 {
   "type": "request_exit_signal",
   "position_id": "POSITION_ID"
+}
+```
+
+### update_position_strategy
+
+Override strategy for a single position.
+
+```json
+{
+  "type": "update_position_strategy",
+  "position_id": 42,
+  "strategy": {
+    "target_profit_pct": 200,
+    "stop_loss_pct": 5,
+    "trailing_stop_pct": 10
+  }
+}
+```
+
+### update_watch_wallets
+
+Add or update watch wallets mid-session for copy trading.
+
+```json
+{
+  "type": "update_watch_wallets",
+  "watch_wallets": [
+    { "pubkey": "WATCH_WALLET_PUBKEY_1" },
+    { "pubkey": "WATCH_WALLET_PUBKEY_2", "auto_buy": { "wallet_pubkey": "YOUR_BUY_WALLET", "amount_quote_units": 100000000 } }
+  ]
 }
 ```
 
@@ -229,5 +264,23 @@ Response to client `ping`.
 ```json
 {
   "type": "pong"
+}
+```
+
+### trade_tick
+
+Real-time trade notification for a tracked position's token.
+
+```json
+{
+  "type": "trade_tick",
+  "position_id": 42,
+  "time_ms": 1709000000000,
+  "side": "buy",
+  "token_amount": 500000,
+  "quote_amount": 25000000,
+  "price_quote": 50000,
+  "maker": "PUBKEY",
+  "tx_signature": "5abc..."
 }
 ```

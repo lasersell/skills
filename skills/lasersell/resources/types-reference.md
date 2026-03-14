@@ -64,6 +64,7 @@
 | `deadline_timeout_sec` | `u64` | No | Seconds before forced exit. `0` = disabled |
 | `send_mode` | `"rpc"` \| `"helius_sender"` \| `"astralane"` | No | Transaction submission mode. Default: `"rpc"` |
 | `tip_lamports` | `u64` | No | Priority fee tip in lamports. Default: 1000 (0.001 SOL) |
+| `watch_wallets` | `WatchWalletEntryMsg[]` | No | External wallets to mirror for copy trading. Each watched wallet's trades appear as events with `watched: true` |
 
 ### StrategyConfigMsg
 
@@ -75,6 +76,47 @@ All fields are optional but at least one must be set:
 | `stop_loss_pct` | `f64` | Stop loss at this % loss |
 | `trailing_stop_pct` | `f64` | Exit when profit drops this % from peak |
 | `sell_on_graduation` | `bool` | Exit on bonding curve graduation |
+| `take_profit_levels` | `TakeProfitLevelMsg[]` | Exit ladder: partial sells at multiple profit thresholds |
+| `liquidity_guard` | `bool` | Check pool liquidity before exit signals. Default: `false` |
+| `breakeven_trail_pct` | `f64` | Trailing stop from breakeven point |
+
+### TakeProfitLevelMsg
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `profit_pct` | `f64` | Profit % trigger |
+| `sell_pct` | `f64` | % of position to sell |
+| `trailing_stop_pct` | `f64` | Optional trailing stop for this level. `0` = sell immediately |
+
+### WatchWalletEntryMsg
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `pubkey` | `string` | Wallet public key to watch |
+| `auto_buy` | `AutoBuyConfigMsg?` | Optional auto-buy configuration |
+
+### AutoBuyConfigMsg
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `wallet_pubkey` | `string` | Your wallet that executes the buy |
+| `amount_quote_units` | `u64` | Amount per buy in quote asset atomic units |
+| `amount_usd1_units` | `u64?` | Amount in USD1 atomic units (alternative) |
+
+### UpdatePositionStrategyClientMessage
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `type` | `"update_position_strategy"` | Message discriminator |
+| `position_id` | `u64` | Position to override |
+| `strategy` | `StrategyConfigMsg` | Strategy override |
+
+### UpdateWatchWalletsClientMessage
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `type` | `"update_watch_wallets"` | Message discriminator |
+| `watch_wallets` | `WatchWalletEntryMsg[]` | Updated watch wallet list |
 
 ### PositionHandle
 

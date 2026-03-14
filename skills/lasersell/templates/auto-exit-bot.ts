@@ -17,6 +17,8 @@ import {
   ExitApiClient,
   StreamClient,
   StreamSession,
+  StrategyConfigBuilder,
+  proveOwnership,
   signUnsignedTx,
   sendTransaction,
   sendTargetHeliusSender,
@@ -26,11 +28,12 @@ import {
 const API_KEY = process.env.LASERSELL_API_KEY!;
 const KEYPAIR_PATH = process.env.KEYPAIR_PATH || "keypair.json";
 
-const STRATEGY = {
-  target_profit_pct: 50,
-  stop_loss_pct: 10,
-  trailing_stop_pct: 5,
-};
+const STRATEGY = new StrategyConfigBuilder()
+  .targetProfitPct(50)
+  .stopLossPct(10)
+  .trailingStopPct(5)
+  .liquidityGuard(true)
+  .build();
 const DEADLINE_TIMEOUT_SEC = 0; // 0 = disabled
 const BUY_SLIPPAGE_BPS = 2_000; // 20%
 
@@ -40,19 +43,24 @@ async function main(): Promise<void> {
   const walletPubkey = keypair.publicKey.toBase58();
 
   console.log(`Wallet: ${walletPubkey}`);
-  console.log(`Strategy: TP=${STRATEGY.target_profit_pct}% SL=${STRATEGY.stop_loss_pct}% TS=${STRATEGY.trailing_stop_pct}%`);
+  console.log(`Strategy: ${JSON.stringify(STRATEGY)}`);
 
-  // 1. Connect stream FIRST
-  const session = await StreamSession.connect(new StreamClient(API_KEY), {
-    wallet_pubkeys: [walletPubkey],
-    strategy: STRATEGY,
-    deadline_timeout_sec: DEADLINE_TIMEOUT_SEC,
-    send_mode: "helius_sender",
-    tip_lamports: 1000,
-  });
+  // 1. Prove wallet ownership (local Ed25519 signature, no network call)
+  const proof = proveOwnership(keypair);
+
+  // 2. Register wallet (required before stream connection)
+  const apiClient = ExitApiClient.withApiKey(API_KEY);
+  await apiClient.registerWallet(proof);
+
+  // 3. Connect stream with registered wallet
+  const session = await new StreamClient(API_KEY).connectWithWallets(
+    [proof],
+    STRATEGY,
+    DEADLINE_TIMEOUT_SEC,
+  );
   console.log("Stream connected.");
 
-  // 2. Optional: buy a token
+  // 4. Optional: buy a token
   const mintToBuy = process.argv[2];
   const amountSol = parseFloat(process.argv[3] || "0");
   if (mintToBuy && amountSol > 0) {
@@ -70,7 +78,7 @@ async function main(): Promise<void> {
     console.log(`Buy submitted: ${buySig}`);
   }
 
-  // 3. Event loop
+  // 5. Event loop
   console.log("Monitoring positions...");
   while (true) {
     const event = await session.recv();

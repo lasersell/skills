@@ -90,6 +90,48 @@ Buy early Pump.fun tokens, exit on graduation event. Stop loss for protection. 5
 ```
 Standard strategy. Take profit at 50%, stop loss at 10%, trailing stop locks in gains above breakeven.
 
+### Exit Ladder
+
+Take profits at multiple levels instead of a single target:
+
+```json
+{
+  "stop_loss_pct": 10,
+  "take_profit_levels": [
+    { "profit_pct": 20, "sell_pct": 25, "trailing_stop_pct": 0 },
+    { "profit_pct": 50, "sell_pct": 50, "trailing_stop_pct": 3 },
+    { "profit_pct": 100, "sell_pct": 100, "trailing_stop_pct": 5 }
+  ]
+}
+```
+Sell 25% at 20% profit, 50% at 50% (with 3% trailing stop), remaining at 100% (with 5% trailing stop). Stop loss protects the entire position.
+
+Using StrategyConfigBuilder:
+
+```typescript
+const strategy = new StrategyConfigBuilder()
+  .stopLossPct(10)
+  .takeProfitLevels([
+    { profit_pct: 20, sell_pct: 25, trailing_stop_pct: 0 },
+    { profit_pct: 50, sell_pct: 50, trailing_stop_pct: 3 },
+    { profit_pct: 100, sell_pct: 100, trailing_stop_pct: 5 },
+  ])
+  .build();
+```
+
+### Breakeven Trail
+
+Protect against giving back all gains with a trailing stop from breakeven:
+
+```json
+{
+  "target_profit_pct": 50,
+  "stop_loss_pct": 10,
+  "breakeven_trail_pct": 2
+}
+```
+Once the position breaks even (profit >= 0), a 2% trailing stop activates from the breakeven point. This exits if profit drops 2% below breakeven, even if the standard trailing stop hasn't triggered yet.
+
 ## Updating Strategy Mid-Session
 
 You can change the strategy without reconnecting:
@@ -103,6 +145,23 @@ session.sender().updateStrategy({
 ```
 
 The new strategy applies to all current and future positions immediately.
+
+### Per-Position Overrides
+
+Override the global strategy for individual positions:
+
+```typescript
+// When a specific token opens, apply a custom strategy
+if (event.type === "position_opened" && isHighConvictionToken(event.handle.mint)) {
+  session.sender().updatePositionStrategy(event.handle.position_id, {
+    target_profit_pct: 500,
+    stop_loss_pct: 25,
+    trailing_stop_pct: 15,
+  });
+}
+```
+
+Overrides only affect the specified position. All other positions continue using the global strategy. Overrides are ephemeral and not persisted across reconnections.
 
 ## Entry Cost and PnL Calculation
 
@@ -194,3 +253,44 @@ Key points:
 - Loop on `session.recv()` and wait for the `balance_update` event to confirm the previous sell landed before building the next transaction
 - If `trend` is `"draining"`, consider selling smaller chunks or exiting faster
 - If `maxTokens` returns 0 or undefined, liquidity has dried up; wait for it to recover or accept remaining exposure
+
+## Copy Trading
+
+### Watch wallet setup
+
+Mirror trades from external wallets by adding them as watch wallets:
+
+```typescript
+const session = await StreamSession.connect(new StreamClient(apiKey), {
+  wallet_pubkeys: [myWallet],
+  strategy: { target_profit_pct: 50, stop_loss_pct: 10 },
+  watch_wallets: [
+    { pubkey: "TopTraderWallet..." },
+    { pubkey: "AnotherTrader...", auto_buy: {
+      wallet_pubkey: myWallet,
+      amount_quote_units: 50_000_000,
+    }},
+  ],
+  deadline_timeout_sec: 120,
+});
+```
+
+### Strategy for copied positions
+
+Use per-position overrides to apply different strategies to copied trades:
+
+```typescript
+if (event.type === "position_opened" && event.message.watched) {
+  // Tighter strategy for copied positions
+  session.sender().updatePositionStrategy(event.handle.position_id, {
+    target_profit_pct: 30,
+    stop_loss_pct: 8,
+    trailing_stop_pct: 5,
+  });
+}
+```
+
+### Auto-buy vs manual mirror
+
+- **Auto-buy enabled**: Stream automatically buys when the watched wallet buys. You only handle exit signals.
+- **No auto-buy**: Stream notifies you of the watched wallet's trades. You decide whether to buy and how much.
